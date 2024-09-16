@@ -1,11 +1,7 @@
-﻿using System;
-using System.Linq;
+﻿using System.IO;
 using System.Net;
 using System.Net.WebSockets;
-using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
-using System.Threading.Tasks.Dataflow;
 
 namespace glitcher.core.Servers
 {
@@ -15,9 +11,9 @@ namespace glitcher.core.Servers
     /// </summary>
     /// <remarks>
     /// Author: Marco Fernandez (marcofdz.com / glitcher.dev)<br/>
-    /// Last modified: 2024.06.18 - June 18, 2024
+    /// Last modified: 2024.07.04 - July 04, 2024
     /// </remarks>
-    public class WebSocketServer : WebSocketServerUtils 
+    public class WebSocketServer : WebSocketServerUtils
     {
 
         #region Properties
@@ -28,7 +24,7 @@ namespace glitcher.core.Servers
         private Dictionary<string, WebSocketServerCommand> _CommandList = new Dictionary<string, WebSocketServerCommand>();
         private Dictionary<string, WebSocketServerCommand<Task>> _CommandListAsync = new Dictionary<string, WebSocketServerCommand<Task>>();
 
-        public int port { get; set; } = 8080;
+        public int port { get; set; } = 8081;
         public int maxConnections { get; set; } = 10;
         public string apiKey { get; set; } = "";
         public List<string>? endpoints { get; set; } = null;
@@ -47,12 +43,19 @@ namespace glitcher.core.Servers
         /// <param name="maxConnections">Max Number of Connections</param>
         ///  <param name="apiKey">API Key to allow requests</param>
         /// <param name="autostart">Start sever on creation</param>
-        public WebSocketServer(int port = 8080, int maxConnections = 10, string apiKey = "",  bool autostart = false)
+        public WebSocketServer(int port = 8080, int maxConnections = 10, string apiKey = "", bool autostart = false)
         {
             this.port = port;
             this.maxConnections = maxConnections;
             this.apiKey = apiKey;
             Logger.Add(LogLevel.OnlyDebug, "WebSocket Server", $"Server created. Port: <{port}> | Max Connections: <{maxConnections}>.");
+
+            // Add Default Actions (Test)
+            AddCommand("hello", (client, payload) => _ = SendToClient(client, new WebSocketServerMsgSent("hello", "hello world! how are you?").ToString(), CancellationToken.None));
+            AddCommand("echo", (client, payload) => _ = SendToClient(client, new WebSocketServerMsgSent("echo", payload).ToString(), CancellationToken.None));
+            AddCommand("echoAll", (client, payload) => _ = SendToAllClients(this._clientsConnected, new WebSocketServerMsgSent("echoAll", payload).ToString(), CancellationToken.None));
+            AddCommand("users", (client, payload) => { _ = SendToClient(client, new WebSocketServerMsgSent("users", this._clientsConnected).ToString(), CancellationToken.None); });
+
             if (autostart)
                 this.Start();
         }
@@ -95,7 +98,7 @@ namespace glitcher.core.Servers
             }
 
             // Get End Points
-            this.endpoints = Utils.GetEndPointsWithPort(this.port);
+            this.endpoints = Utils.GetEndPointsWithPort(this.port, true, false, false, true);
 
             // Force the use of cancellation Token
             if (this.cToken == null)
@@ -112,22 +115,19 @@ namespace glitcher.core.Servers
                 Logger.Add(LogLevel.Success, "WebSocket Server", $"Listening connections on <{endpoint}>.");
             }
             _httpServerListener.Start();
-            NotifyChange("started");
+            NotifyChange("started", null);
 
-            // Add Default Actions (Test)
-            AddCommand("hello", (client, payload) => _ = SendToClient(client, new WebSocketServerMsgSent("hello", "how are you?").ToString(), CancellationToken.None));
-            AddCommand("echo", (client, payload) => _ = SendToClient(client, new WebSocketServerMsgSent("echo", payload).ToString(), CancellationToken.None));
-            AddCommand("echoAll", (client, payload) => _ = SendToAllClients(this._clientsConnected, new WebSocketServerMsgSent("echoAll", payload).ToString(), CancellationToken.None));
-            AddCommand("users", (client, payload) => { _ = SendToClient(client, new WebSocketServerMsgSent("users", this._clientsConnected).ToString(), CancellationToken.None); });
-            
             // Manage multiple requests tasks (threads)
             _requestThreads = new HashSet<Task>();
-            for (int i = 0; i < this.maxConnections+1; i++)
+            _requestThreads.Clear();
+            for (int i = 0; i < this.maxConnections + 1; i++)
                 _requestThreads.Add(_httpServerListener.GetContextAsync());
 
             // Handle Requests (Continous Loop)
-            while (!this.cToken.Token.IsCancellationRequested)
+            while (!this.cToken.IsCancellationRequested)
             {
+                NotifyChange("running", null);
+
                 // Listen for requests in all the threads and remove that thread from threads available
                 Task _singleRequestThread = await Task.WhenAny(_requestThreads);
                 _requestThreads.Remove(_singleRequestThread);
@@ -140,7 +140,7 @@ namespace glitcher.core.Servers
                 if (_requestThreads.Count == 0)
                 {
                     if (client != null)
-                        await ForceDisconnectionResponseAsync(client, this.cToken.Token);
+                        await ForceDisconnectionResponseAsync(client, this.cToken);
                     continue;
                 }
 
@@ -150,11 +150,11 @@ namespace glitcher.core.Servers
                     _ = Task.Run(async () => {
                         // Wait for a Message from Client And Serve a Response
                         if (client != null)
-                            await WaitMessageAndServeResponseAsync(client, this.cToken.Token);
+                            await WaitMessageAndServeResponseAsync(client, this.cToken);
                         // Add again a request thread after serve response
                         _requestThreads.Add(_httpServerListener.GetContextAsync());
                         Logger.Add(LogLevel.Info, "WebSocket Server", $"User disconnected. Total users: (#{_clientsConnected?.Count}). Threads Remaining: ({_requestThreads.Count - 1}).");
-                    });
+                    }, this.cToken.Token);
                 }
                 else
                 {
@@ -166,6 +166,9 @@ namespace glitcher.core.Servers
 
             // On Cancellation
             _requestThreads.Clear();
+
+            // Dispose Token
+            this.cToken = null;
         }
 
         /// <summary>
@@ -184,7 +187,7 @@ namespace glitcher.core.Servers
             {
                 response.StatusCode = (int)HttpStatusCode.BadRequest;
                 response.Close();
-                NotifyChange("badRequest");
+                NotifyChange("badRequest", null);
                 Logger.Add(LogLevel.Error, "WebSocket Server", $"Bad Request: User tried to connect.");
                 return null;
             }
@@ -201,7 +204,7 @@ namespace glitcher.core.Servers
             WebSocketServerClient client = new WebSocketServerClient(request, webSocket);
             _clientsConnected.Add(client);
 
-            NotifyChange("userConnected");
+            NotifyChange("userConnected", client);
             Logger.Add(LogLevel.Info, "WebSocket Server", $"User connected. Total users: (#{_clientsConnected.Count}). Threads Remaining: ({_requestThreads.Count}).", client.UIDshort);
             return client;
         }
@@ -212,28 +215,28 @@ namespace glitcher.core.Servers
         /// <param name="client">Web Socket Server Client (User)</param>
         /// <param name="cToken">Cancellation Token</param>
         /// <returns>(void *async)</returns>
-        public async Task WaitMessageAndServeResponseAsync(WebSocketServerClient client, CancellationToken cToken)
+        public async Task WaitMessageAndServeResponseAsync(WebSocketServerClient client, CancellationTokenSource cToken)
         {
             // Welcome message
-            _ = SendToClient(client, new WebSocketServerMsgSent("welcome", $"Hi. Welcome {client.IPAddress} <{client.UIDshort}>! Connected On: {client.connectedOn}").ToString(), cToken);
+            _ = SendToClient(client, new WebSocketServerMsgSent("welcome", $"Hi. Welcome {client.IPAddress} <{client.UIDshort}>! Connected On: {client.connectedOn}").ToString(), cToken.Token);
 
             // Create buffer for result
-            var buffer = new byte[1024];
+            var buffer = new byte[10240];
             WebSocketReceiveResult result;
 
-            while (client.WebSocket.State == WebSocketState.Open)
+            while ((client.WebSocket.State == WebSocketState.Open) && (!cToken.IsCancellationRequested))
             {
                 // Wait until a Message from client is Received
-                result = await client.WebSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cToken);
+                result = await client.WebSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cToken.Token);
                 string message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                NotifyChange("messageReceived");
+                NotifyChange("messageReceived", client);
 
                 // Close Request
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    await client.WebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, cToken);
+                    await client.WebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, cToken.Token);
                     _clientsConnected?.Remove(client);
-                    NotifyChange("userDisconnected");
+                    NotifyChange("userDisconnected", client);
                 }
                 // Message Request
                 else if (result.MessageType == WebSocketMessageType.Text)
@@ -244,13 +247,13 @@ namespace glitcher.core.Servers
                     // Impossible to parse
                     if (msgReceived == null)
                     {
-                        _ = SendToClient(client, new WebSocketServerMsgSent("error", $"JSON Incorrect format.").ToString(), cToken);
+                        _ = SendToClient(client, new WebSocketServerMsgSent("error", $"JSON Incorrect format.").ToString(), cToken.Token);
                         continue;
                     }
                     // Wrong API Key
                     if (!msgReceived.apiKey.Equals(this.apiKey))
                     {
-                        _ = SendToClient(client, new WebSocketServerMsgSent("badApiKey", $"Incorrect API KEY, impossible to proceed.").ToString(), cToken);
+                        _ = SendToClient(client, new WebSocketServerMsgSent("badApiKey", $"Incorrect API KEY, impossible to proceed.").ToString(), cToken.Token);
                         Logger.Add(LogLevel.Warning, "WebSocket Server", $"Incorrect API KEY, impossible to proceed.", client.UIDshort);
                         continue;
                     }
@@ -269,13 +272,12 @@ namespace glitcher.core.Servers
                     // Command not found
                     else
                     {
-                        _ = SendToClient(client, new WebSocketServerMsgSent("error", $"Action ({msgReceived.action}) doesn't have any defined task.").ToString(), cToken);
+                        _ = SendToClient(client, new WebSocketServerMsgSent("error", $"Action ({msgReceived.action}) doesn't have any defined task.").ToString(), cToken.Token);
                     }
                 }
             }
             return;
         }
-
 
         /// <summary>
         /// Send an error message to client and force disconnection
@@ -283,21 +285,21 @@ namespace glitcher.core.Servers
         /// <param name="client">Web Socket Server Client (User)</param>
         /// <param name="cToken">Cancellation Token</param>
         /// <returns>(void *async)</returns>
-        public async Task ForceDisconnectionResponseAsync(WebSocketServerClient client, CancellationToken cToken)
+        public async Task ForceDisconnectionResponseAsync(WebSocketServerClient client, CancellationTokenSource cToken)
         {
             // Send Error to Client
-            _ = SendToClient(client, new WebSocketServerMsgSent("error", $"Limit of Max Connections reached. Connection Rejected.").ToString(), cToken);
+            _ = SendToClient(client, new WebSocketServerMsgSent("error", $"Limit of Max Connections reached. Connection Rejected.").ToString(), cToken.Token);
 
             // Disconnect Server
-            await client.WebSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, string.Empty, cToken);
+            await client.WebSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, string.Empty, cToken.Token);
 
             // Remove from Clients Connected
             _clientsConnected?.Remove(client);
 
             // Add again a request thread after serve response
             _requestThreads.Add(_httpServerListener.GetContextAsync());
-            NotifyChange("userDisconnectedForced");
-            Logger.Add(LogLevel.Info, "WebSocket Server", $"User disconnected (foced). Total users: (#{_clientsConnected?.Count}). Threads Remaining: ({_requestThreads.Count}).", client.UIDshort);
+            NotifyChange("userDisconnectedForced", client);
+            Logger.Add(LogLevel.Info, "WebSocket Server", $"User disconnected (forced). Total users: (#{_clientsConnected?.Count}). Threads Remaining: ({_requestThreads.Count}).", client.UIDshort);
             Logger.Add(LogLevel.Error, "WebSocket Server", $"Limit of Max Connections reached. Connection Rejected.");
         }
 
@@ -327,7 +329,7 @@ namespace glitcher.core.Servers
             {
                 Logger.Add(LogLevel.Error, "WebSocket Server", $"Error stopping Web Socket Server", $"Exception: {ex.Message}.");
             }
-            NotifyChange("stopped");
+            NotifyChange("stopped", null);
         }
 
         #endregion
@@ -350,7 +352,10 @@ namespace glitcher.core.Servers
         {
             WebSocketServerCommand response;
             response.callback = callback;
-            _CommandList.Add(command, response);
+            if (!_CommandList.ContainsKey(command))
+                _CommandList.Add(command, response);
+            else
+                Logger.Add(LogLevel.Warning, "WebSocket Server", $"Command duplicated: <{command}>.");
         }
 
         /// <summary>Add a *Command*, defining an (async) action to be triggered on request.<br/>
@@ -369,7 +374,10 @@ namespace glitcher.core.Servers
         {
             WebSocketServerCommand<Task> response;
             response.callback = callback;
-            _CommandListAsync.Add(command, response);
+            if (!_CommandListAsync.ContainsKey(command))
+                _CommandListAsync.Add(command, response);
+            else
+                Logger.Add(LogLevel.Warning, "WebSocket Server", $"Command Async duplicated: <{command}>.");
         }
 
         #endregion
@@ -380,12 +388,12 @@ namespace glitcher.core.Servers
         /// Notify a change on WebSocket Server.
         /// </summary>
         /// <returns>(void)</returns>
-        private void NotifyChange(string eventType)
+        private void NotifyChange(string eventType, WebSocketServerClient client)
         {
             this.isRunning = (_httpServerListener != null) ? _httpServerListener.IsListening : false;
             if (ChangeOccurred != null)
             {
-                ChangeOccurred.Invoke(this, new WebSocketServerEvent(eventType));
+                ChangeOccurred.Invoke(this, new WebSocketServerEvent(eventType, client));
             }
         }
 

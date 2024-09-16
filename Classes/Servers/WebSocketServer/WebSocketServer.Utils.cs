@@ -20,7 +20,7 @@ namespace glitcher.core.Servers
         /// <param name="client">Web Socket Server Client (User)</param>
         /// <param name="message">Message to send to client</param>
         /// <param name="cToken">Cancellation Token</param>
-        protected async Task<bool> SendToClient(WebSocketServerClient client, string message, CancellationToken cToken)
+        public async Task<bool> SendToClient(WebSocketServerClient client, string message, CancellationToken cToken)
         {
             try
             {

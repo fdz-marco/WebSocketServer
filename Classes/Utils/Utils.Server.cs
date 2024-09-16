@@ -8,7 +8,7 @@ namespace glitcher.core
     /// </summary>
     /// <remarks>
     /// Author: Marco Fernandez (marcofdz.com / glitcher.dev)<br/>
-    /// Last modified: 2024.06.18 - June 18, 2024
+    /// Last modified: 2024.07.04 - July 04, 2024
     /// </remarks>
     public static partial class Utils
     {
@@ -16,10 +16,16 @@ namespace glitcher.core
         /// <summary>
         /// Get Local IPs
         /// </summary>
-        /// <returns>(String[]) List of string with the IPs</returns>
-        public static String[] GetAllLocalIPv4()
+        /// <returns>(List<string>) List of string with the IPs</returns>
+        public static List<string> GetAllLocalIPv4(bool local)
         {
             List<string>? ipAddrList = new List<string>();
+            ipAddrList.Add("127.0.0.1");
+            ipAddrList.Add("localhost");
+
+            if (local)
+                return ipAddrList;
+
             foreach (NetworkInterface item in NetworkInterface.GetAllNetworkInterfaces())
             {
                 if (item.OperationalStatus == OperationalStatus.Up)
@@ -34,11 +40,7 @@ namespace glitcher.core
                 }
             }
 
-            if (ipAddrList.FindIndex(x => x == "127.0.0.1") < 0)
-                ipAddrList.Add("127.0.0.1");
-            if (ipAddrList.FindIndex(x => x == "localhost") < 0)
-                ipAddrList.Add("localhost");
-            return ipAddrList.ToArray();
+            return ipAddrList.Distinct().ToList();
         }
 
         /// <summary>
@@ -84,7 +86,7 @@ namespace glitcher.core
         /// <returns>(string) Operative System</returns>
         public static string GetOSFromUserAgent(string userAgent)
         {
-			if (userAgent == null)
+            if (userAgent == null)
                 return "Empty OS";
             if (userAgent.Contains("Windows NT 10.0"))
                 return "Windows 10";
@@ -114,13 +116,24 @@ namespace glitcher.core
         /// Get all the EndPoints with Port
         /// </summary>
         /// <param name="port">Port of EndPoints</param>
-        /// <param name="onlyLocal">Only Local EndPoints</param>
-        /// <returns>(string) Operative System</returns>
-        public static List<string>? GetEndPointsWithPort(int port, bool onlyLocal = true)
+        /// <param name="includeHTTP">Include HTTP</param>
+        /// <param name="includeWS">Include WS</param>
+        /// <param name="includeSecure">Include Secure (HTTPS/WSS)</param>
+        /// <param name="local">Only Local EndPoints</param>
+        /// <returns>(List<string>) List of Endpoints with Port </returns>
+        public static List<string>? GetEndPointsWithPort(int port, bool includeHTTP = true, bool includeWS = false, bool includeSecure = false, bool local = true)
         {
+            List<string> endpoints = new List<string>();
+
+            // Add Local EndPoints
+            if (includeHTTP) endpoints.AddRange(Utils.GetAllLocalIPv4(true).Select(x => $"http://{x}:{port}/").ToList());
+            if (includeHTTP && includeSecure) endpoints.AddRange(Utils.GetAllLocalIPv4(true).Select(x => $"https://{x}:{port}/").ToList());
+            if (includeWS) endpoints.AddRange(Utils.GetAllLocalIPv4(true).Select(x => $"ws://{x}:{port}/").ToList());
+            if (includeWS && includeSecure) endpoints.AddRange(Utils.GetAllLocalIPv4(true).Select(x => $"wss://{x}:{port}/").ToList());
+
             // Return only local
-            if (onlyLocal)
-                return new List<string>() { $"http://localhost:{port}/", $"http://127.0.0.1:{port}/" };
+            if (local)
+                return endpoints.Distinct().ToList();
 
             // Check admin rights to check if is possible to use all endpoints or only local
             if (!Utils.IsRunAsAdmin())
@@ -136,12 +149,17 @@ namespace glitcher.core
                 else
                 {
                     MessageBox.Show("Only local domains ports will be used.", "Administrator Privilages");
-                    return new List<string>() { $"http://localhost:{port}/", $"http://127.0.0.1:{port}/" };
+                    return endpoints.Distinct().ToList();
                 }
             }
             else
             {
-               return new List<string>(Utils.GetAllLocalIPv4().Select(x => $"http://{x}:{port}/"));
+                // Add AllEndPoints Available (All Network Cards)
+                if (includeHTTP) endpoints.AddRange(Utils.GetAllLocalIPv4(false).Select(x => $"http://{x}:{port}/").ToList());
+                if (includeHTTP && includeSecure) endpoints.AddRange(Utils.GetAllLocalIPv4(false).Select(x => $"https://{x}:{port}/").ToList());
+                if (includeWS) endpoints.AddRange(Utils.GetAllLocalIPv4(false).Select(x => $"ws://{x}:{port}/").ToList());
+                if (includeWS && includeSecure) endpoints.AddRange(Utils.GetAllLocalIPv4(false).Select(x => $"wss://{x}:{port}/").ToList());
+                return endpoints.Distinct().ToList();
             }
         }
     }

@@ -28,7 +28,8 @@ namespace glitcher.core.Servers
         /// <summary>
         /// Convert to objet to string (override)
         /// </summary>
-        public override string ToString() {
+        public override string ToString()
+        {
             return JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
         }
     }

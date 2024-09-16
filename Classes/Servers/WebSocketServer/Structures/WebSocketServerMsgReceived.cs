@@ -7,7 +7,7 @@ namespace glitcher.core.Servers
     /// </summary>
     /// <remarks>
     /// Author: Marco Fernandez (marcofdz.com / glitcher.dev)<br/>
-    /// Last modified: 2024.06.18 - June 18, 2024
+    /// Last modified: 2024.07.02 - July 02, 2024
     /// </remarks>
     public class WebSocketServerMsgReceived
     {
@@ -52,7 +52,7 @@ namespace glitcher.core.Servers
                 JsonElement root = document.RootElement;
                 apiKey = root.GetProperty("apiKey").GetString();
                 action = root.GetProperty("action").GetString();
-                payload = root.GetProperty("payload");
+                payload = root.GetProperty("payload").GetRawText();
             }
             catch (Exception ex)
             {

@@ -7,7 +7,7 @@ namespace glitcher.core
     /// </summary>
     /// <remarks>
     /// Author: Marco Fernandez (marcofdz.com / glitcher.dev)<br/>
-    /// Last modified: 2024.06.18 - June 18, 2024
+    /// Last modified: 2024.09.16 - September 16, 2024
     /// </remarks>
     public partial class LogViewer : Form
     {
@@ -79,7 +79,7 @@ namespace glitcher.core
             ColumnHeader header5 = new ColumnHeader();
             header5.Text = "Whisper";
             header5.TextAlign = HorizontalAlignment.Left;
-            header5.Width = 80;
+            header5.Width = 200;
 
             ColumnHeader header6 = new ColumnHeader();
             header6.Text = "Caller";
